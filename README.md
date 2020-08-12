@@ -76,7 +76,8 @@ For convenience, you can instead pass these parameters add keyword args, for exa
 
 Training a ResNet-18 for 320 epochs on STL-10 achieves 82% linear classification accuracy on the test set (1 fold of 5000). This used all default parameters.
 
- Training a ResNet-50 for 200 epochs on ImageNet achieves XX% linear classification accuracy on the test set. This used 8 gpus with `ddp` and parameters:
+ Training a ResNet-50 for 200 epochs on ImageNet achieves 65.6% linear classification accuracy on the test set. 
+ This used 8 gpus with `ddp` and parameters:
  
  ```python
 params = MoCoMethodParams(
@@ -92,6 +93,10 @@ params = MoCoMethodParams(
     gather_keys_for_queue=True,
 )
 ```
+
+(the `batch_size` and `lr` differ from the moco documentation due to the way Pytorch-Lightning handles multi-gpu 
+training in `ddp` -- the effective numbers are `batch_size=256` and `lr=0.03`). 
+ 
  
 
 ## Other options
