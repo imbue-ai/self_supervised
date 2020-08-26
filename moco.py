@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 
 import utils
 from batchrenorm import BatchRenorm1d
+from lars import LARS
 
 
 @attr.s(auto_attribs=True)
@@ -50,6 +51,8 @@ class MoCoMethodParams:
     loss_type: str = "ce"
     use_negative_examples: bool = True
     use_both_augmentations_as_queries: bool = False
+    optimizer_name: str = "sgd"
+    exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
 
     # MLP parameters
     projection_mlp_layers: int = 2
@@ -311,8 +314,34 @@ class MoCoMethod(pl.LightningModule):
         }
 
     def configure_optimizers(self):
-        encoding_optimizer = torch.optim.SGD(
-            self.parameters(),
+        # exclude bias and batch norm from LARS and weight decay
+        regular_parameters = []
+        regular_parameter_names = []
+        excluded_parameters = []
+        excluded_parameter_names = []
+        for name, parameter in self.named_parameters():
+            if parameter.requires_grad is False:
+                continue
+            if any(x in name for x in self.hparams.exclude_matching_parameters_from_lars):
+                excluded_parameters.append(parameter)
+                excluded_parameter_names.append(name)
+            else:
+                regular_parameters.append(parameter)
+                regular_parameter_names.append(name)
+
+        param_groups = [
+            {"params": regular_parameters, "names": regular_parameter_names, "use_lars": True},
+            {"params": excluded_parameters, "names": excluded_parameter_names, "use_lars": False, "weight_decay": 0,},
+        ]
+        if self.hparams.optimizer_name == "sgd":
+            optimizer = torch.optim.SGD
+        elif self.hparams.optimizer_name == "lars":
+            optimizer = LARS
+        else:
+            raise NotImplementedError(f"No such optimizer {self.hparams.optimizer_name}")
+
+        encoding_optimizer = optimizer(
+            param_groups,
             lr=self.hparams.lr,
             momentum=self.hparams.momentum,
             weight_decay=self.hparams.weight_decay,

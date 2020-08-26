@@ -6,6 +6,8 @@ This is an implementation of [MoCo](https://arxiv.org/abs/1911.05722), [MoCo v2]
 paper are difficult given the large minibatch size requirements and the need for batch norm synchronization. MoCo v2 
 reports better performance without such large minibatch sizes or batch norm synchronization.
 
+See the blog post [Understanding self-supervised and contrastive learning with "Bootstrap Your Own Latent" (BYOL)](https://untitled-ai.github.io/understanding-self-supervised-contrastive-learning.html) for more details.
+
 ## Install
 
 Make sure you're in a fresh `conda` or `venv` environment, then run:
@@ -137,6 +139,8 @@ class MoCoMethodParams:
     loss_type: str = "ce"
     use_negative_examples: bool = True
     use_both_augmentations_as_queries: bool = False
+    optimizer_name: str = "sgd"
+    exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
 
     # MLP parameters
     projection_mlp_layers: int = 2
@@ -164,6 +168,11 @@ be downloaded if it does not already exist.
 **loss_type** can be `ce` (cross entropy) with `use_negative_examples=True` to correspond to MoCo or `ip` (inner product) 
 with `use_negative_examples=False` to correspond to BYOL. It can also be `bce`, which is similar to `ip` but applies the 
 binary cross entropy loss function to the result.
+
+**optimizer_name**, currently just `sgd` or `lars`. 
+
+**exclude_matching_parameters_from_lars** will remove weight decay and LARS learning rate from matching parameters. Set
+to `[".bias", ".bn"]` to match BYOL paper implementation.
 
 **mlp_normalization** can be None for no normalization, `bn` for batch normalization, `ln` for layer norm, `gn` for group
 norm, or `br` for [batch renormalization](https://github.com/ludvb/batchrenorm).
