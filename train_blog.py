@@ -10,13 +10,15 @@ def main():
     base_config = MoCoMethodParams(
         lr=0.8,
         batch_size=256,
-        multi_gpu_training=False,
+        gather_keys_for_queue=False,
         loss_type="ip",
         use_negative_examples=False,
         use_both_augmentations_as_queries=True,
         mlp_normalization="bn",
         prediction_mlp_layers=2,
         projection_mlp_layers=2,
+        m=0.996,
+        use_momentum_schedule=True,
     )
     configs = {
         "base": base_config,

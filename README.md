@@ -64,10 +64,13 @@ from moco import MoCoMethod
 params = MoCoMethodParams(
     prediction_mlp_layers = 2,
     mlp_normalization = "bn",
-    use_momentum_schedule = True,
     loss_type = "ip",
     use_negative_examples = False,
     use_both_augmentations_as_queries = True,
+    m=0.996,
+    use_momentum_schedule = True,
+    optimizer_name = "lars",
+    exclude_matching_parameters_from_lars = [".bias", ".bn"],
 )
 model = MoCoMethod(params)
 ```
@@ -88,7 +91,7 @@ params = MoCoMethodParams(
     embedding_dim=2048,
     dataset_name="imagenet",
     batch_size=32, 
-    lr=0.24,
+    lr=0.03,
     max_epochs=200, 
     transform_crop_size=224,
     num_data_workers=32,
@@ -96,8 +99,8 @@ params = MoCoMethodParams(
 )
 ```
 
-(the `batch_size` and `lr` differ from the moco documentation due to the way Pytorch-Lightning handles multi-gpu 
-training in `ddp` -- the effective numbers are `batch_size=256` and `lr=0.03`). 
+(the `batch_size` differs from the moco documentation due to the way Pytorch-Lightning handles multi-gpu 
+training in `ddp` -- the effective number is `batch_size=256`). 
  
  
 
@@ -119,7 +122,7 @@ class MoCoMethodParams:
     # MoCo parameters
     K: int = 65536  # number of examples in queue
     dim: int = 128
-    m: float = 0.996
+    m: float = 0.999
     T: float = 0.2
     gather_keys_for_queue: bool = False
 

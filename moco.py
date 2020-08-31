@@ -32,7 +32,7 @@ class MoCoMethodParams:
     # MoCo parameters
     K: int = 65536  # number of examples in queue
     dim: int = 128
-    m: float = 0.996
+    m: float = 0.999
     T: float = 0.2
 
     # optimization parameters
