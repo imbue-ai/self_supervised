@@ -60,6 +60,21 @@ class MoCoTransforms:
         transform_list.append(moco_normalize)
         return transforms.Compose(transform_list)
 
+    def get_test_transform(self):
+        # rough heuristic for resizing test set before crop
+        if self.crop_size < 128:
+            test_resize = 128
+        else:
+            test_resize = 256
+        return transforms.Compose(
+            [
+                transforms.Resize(test_resize),
+                transforms.CenterCrop(self.crop_size),
+                transforms.ToTensor(),
+                moco_normalize,
+            ]
+        )
+
 
 #################
 # Dataset utils #
@@ -159,9 +174,9 @@ class ImagenetDataset(DatasetBase):
 
 def get_moco_dataset(name: str, t: MoCoTransforms) -> DatasetBase:
     if name == "stl10":
-        return STL10UnlabeledDataset(transform_train=t.split_transform, transform_test=moco_test_transform)
+        return STL10UnlabeledDataset(transform_train=t.split_transform, transform_test=t.get_test_transform())
     elif name == "imagenet":
-        return ImagenetDataset(transform_train=t.split_transform, transform_test=moco_test_transform)
+        return ImagenetDataset(transform_train=t.split_transform, transform_test=t.get_test_transform())
     raise NotImplementedError(f"Dataset {name} not defined")
 
 

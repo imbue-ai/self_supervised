@@ -2,6 +2,7 @@ import copy
 import math
 import warnings
 from functools import partial
+from typing import List
 from typing import Optional
 from typing import Union
 
@@ -341,10 +342,7 @@ class MoCoMethod(pl.LightningModule):
             raise NotImplementedError(f"No such optimizer {self.hparams.optimizer_name}")
 
         encoding_optimizer = optimizer(
-            param_groups,
-            lr=self.hparams.lr,
-            momentum=self.hparams.momentum,
-            weight_decay=self.hparams.weight_decay,
+            param_groups, lr=self.hparams.lr, momentum=self.hparams.momentum, weight_decay=self.hparams.weight_decay,
         )
         self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             encoding_optimizer, self.hparams.max_epochs, eta_min=0

@@ -85,14 +85,15 @@ Training a ResNet-18 for 320 epochs on STL-10 achieves 82% linear classification
  This used 8 gpus with `ddp` and parameters:
  
  ```python
-params = MoCoMethodParams(
+hparams = MoCoMethodParams(
     encoder_arch="resnet50",
     shuffle_batch_norm=True,
     embedding_dim=2048,
+    mlp_hidden_dim=2048,
     dataset_name="imagenet",
-    batch_size=32, 
+    batch_size=32,
     lr=0.03,
-    max_epochs=200, 
+    max_epochs=200,
     transform_crop_size=224,
     num_data_workers=32,
     gather_keys_for_queue=True,
@@ -100,8 +101,8 @@ params = MoCoMethodParams(
 ```
 
 (the `batch_size` differs from the moco documentation due to the way Pytorch-Lightning handles multi-gpu 
-training in `ddp` -- the effective number is `batch_size=256`). 
- 
+training in `ddp` -- the effective number is `batch_size=256`). **Note that for ImageNet we suggest using 
+`val_percent_check=0.1` when calling `pl.Trainer`** to reduce the time fitting the sklearn model.
  
 
 ## Other options
