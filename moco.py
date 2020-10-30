@@ -73,7 +73,7 @@ class MoCoMethodParams:
 
 def get_mlp_normalization(hparams: MoCoMethodParams, prediction=False):
     normalization_str = hparams.mlp_normalization
-    if prediction and hparams.prediction_mlp_normalization is not "same":
+    if prediction and hparams.prediction_mlp_normalization != "same":
         normalization_str = hparams.prediction_mlp_normalization
 
     if normalization_str is None:
@@ -282,7 +282,8 @@ class MoCoMethod(pl.LightningModule):
         if self.hparams.use_negative_examples:
             self._dequeue_and_enqueue(k)
 
-        return {"loss": contrastive_loss, "log": log_data}
+        self.log_dict(log_data)
+        return {"loss": contrastive_loss}
 
     def validation_step(self, batch, batch_idx):
         x, class_labels = batch
@@ -307,12 +308,7 @@ class MoCoMethod(pl.LightningModule):
             "m": self._get_m(),
         }
         print(f"Epoch {self.current_epoch} accuracy: train: {train_accuracy:.1f}%, validation: {valid_accuracy:.1f}%")
-        print(log_data)
-        return {
-            "log": log_data,
-            "train_class_acc": train_accuracy,
-            "valid_class_acc": valid_accuracy,
-        }
+        self.log_dict(log_data)
 
     def configure_optimizers(self):
         # exclude bias and batch norm from LARS and weight decay

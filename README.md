@@ -34,7 +34,7 @@ from moco import MoCoMethod
 os.environ["DATA_PATH"] = "~/data"
 
 model = MoCoMethod()
-trainer = pl.Trainer(gpus=1, max_epochs=200)    
+trainer = pl.Trainer(gpus=1, max_epochs=320)    
 trainer.fit(model) 
 trainer.save_checkpoint("example.ckpt")
 ```
