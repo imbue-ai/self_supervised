@@ -2,9 +2,7 @@
 
 This is an implementation of [MoCo](https://arxiv.org/abs/1911.05722), [MoCo v2](https://arxiv.org/abs/2003.04297), and [BYOL](https://arxiv.org/abs/2006.07733) using [Pytorch Lightning](https://github.com/PyTorchLightning/pytorch-lightning). The configuration can be tweaked to implement a range of possible self-supervised implementations.
 
-[SimCLR](https://arxiv.org/abs/2002.05709) is a related framework, but precisely reproducing the results of the
-paper are difficult given the large minibatch size requirements and the need for batch norm synchronization. MoCo v2 
-reports better performance without such large minibatch sizes or batch norm synchronization.
+We have recently added the necessary functionality to run [SimCLR](https://arxiv.org/abs/2002.05709) and [EqCo](https://arxiv.org/abs/2010.01929) for comparison.
 
 See the blog post [Understanding self-supervised and contrastive learning with "Bootstrap Your Own Latent" (BYOL)](https://untitled-ai.github.io/understanding-self-supervised-contrastive-learning.html) for more details.
 
@@ -65,9 +63,8 @@ params = MoCoMethodParams(
     prediction_mlp_layers = 2,
     mlp_normalization = "bn",
     loss_type = "ip",
-    use_negative_examples = False,
+    use_negative_examples_from_queue = False,
     use_both_augmentations_as_queries = True,
-    m=0.996,
     use_momentum_schedule = True,
     optimizer_name = "lars",
     exclude_matching_parameters_from_lars = [".bias", ".bn"],
@@ -77,9 +74,45 @@ model = MoCoMethod(params)
 
 For convenience, you can instead pass these parameters add keyword args, for example with `model = MoCoMethod(batch_size=128)`.
 
+## SimCLR
+
+To run SimCLR, simply `use_negative_examples_from_batch` and disable `use_negative_examples_from_queue`. You can also set `K=0`: 
+
+ ```python
+hparams = MoCoMethodParams(
+    use_negative_examples_from_batch=True,
+    use_negative_examples_from_queue=False,
+    K=0
+)
+```
+
+**Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs.
+
+## EqCo
+
+Using EqCo increases the weight on negative examples to create an "effective" number of negative examples `eqco_alpha`. To train MoCo with a smaller queue but the same effective number, you could use,
+
+```python
+hparams = MoCoMethodParams(use_eqco_margin=True, eqco_alpha=65536, K=256)
+```
+
+We found this to be effective in matching the performance of the larger queue in our testing.  Because we are only using 256 examples now, we can actually just get them from the batch,
+
+```python
+hparams = MoCoMethodParams(
+    use_eqco_margin=True, 
+    eqco_alpha=65536, 
+    K=0,
+    use_negative_examples_from_batch=True,
+    use_negative_examples_from_queue=False 
+)
+```
+
+We've found taking negatives from the same batch to perform marginally better than MoCo on STL10.
+
 ## Training results
 
-Training a ResNet-18 for 320 epochs on STL-10 achieves 82% linear classification accuracy on the test set (1 fold of 5000). This used all default parameters.
+Training a ResNet-18 for 320 epochs on STL-10 achieved 85% linear classification accuracy on the test set (1 fold of 5000). This used all default parameters.
 
  Training a ResNet-50 for 200 epochs on ImageNet achieves 65.6% linear classification accuracy on the test set. 
  This used 8 gpus with `ddp` and parameters:
@@ -123,9 +156,14 @@ class MoCoMethodParams:
     # MoCo parameters
     K: int = 65536  # number of examples in queue
     dim: int = 128
-    m: float = 0.999
+    m: float = 0.996
     T: float = 0.2
     gather_keys_for_queue: bool = False
+
+    # eqco parameters
+    eqco_alpha: int = 65536
+    use_eqco_margin: bool = False
+    use_negative_examples_from_batch: bool = False
 
     # optimization parameters
     lr: float = 0.2
@@ -141,7 +179,7 @@ class MoCoMethodParams:
     # Change these to make more like BYOL
     use_momentum_schedule: bool = False
     loss_type: str = "ce"
-    use_negative_examples: bool = True
+    use_negative_examples_from_queue: bool = True
     use_both_augmentations_as_queries: bool = False
     optimizer_name: str = "sgd"
     exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
@@ -169,8 +207,8 @@ A few options require more explanation:
 **dataset_name** can be `stl10` or `imagenet`. `os.environ["DATA_PATH"]` will be used as the path to the data. STL-10 will
 be downloaded if it does not already exist.
 
-**loss_type** can be `ce` (cross entropy) with `use_negative_examples=True` to correspond to MoCo or `ip` (inner product) 
-with `use_negative_examples=False` to correspond to BYOL. It can also be `bce`, which is similar to `ip` but applies the 
+**loss_type** can be `ce` (cross entropy) with one of the `use_negative_examples` to correspond to MoCo or `ip` (inner product) 
+with both `use_negative_examples=False` to correspond to BYOL. It can also be `bce`, which is similar to `ip` but applies the 
 binary cross entropy loss function to the result.
 
 **optimizer_name**, currently just `sgd` or `lars`. 

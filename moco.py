@@ -33,8 +33,13 @@ class MoCoMethodParams:
     # MoCo parameters
     K: int = 65536  # number of examples in queue
     dim: int = 128
-    m: float = 0.999
+    m: float = 0.996
     T: float = 0.2
+
+    # eqco parameters
+    eqco_alpha: int = 65536
+    use_eqco_margin: bool = False
+    use_negative_examples_from_batch: bool = False
 
     # optimization parameters
     lr: float = 0.5
@@ -50,7 +55,7 @@ class MoCoMethodParams:
     # Change these to make more like BYOL
     use_momentum_schedule: bool = False
     loss_type: str = "ce"
-    use_negative_examples: bool = True
+    use_negative_examples_from_queue: bool = True
     use_both_augmentations_as_queries: bool = False
     optimizer_name: str = "sgd"
     exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
@@ -118,7 +123,8 @@ class MoCoMethod(pl.LightningModule):
                 "Configuration suspicious: gather_keys_for_queue without shuffle_batch_norm or weight standardization"
             )
 
-        if hparams.loss_type == "ce" and not hparams.use_negative_examples:
+        some_negative_examples = hparams.use_negative_examples_from_batch or hparams.use_negative_examples_from_queue
+        if hparams.loss_type == "ce" and not some_negative_examples:
             warnings.warn("Configuration suspicious: cross entropy loss without negative examples")
 
         # Create encoder model
@@ -200,12 +206,17 @@ class MoCoMethod(pl.LightningModule):
         return emb_q, q, k
 
     def _get_contrastive_predictions(self, q, k):
+        if self.hparams.use_negative_examples_from_batch:
+            logits = torch.mm(q, k.T)
+            labels = torch.arange(0, q.shape[0], dtype=torch.long).to(logits.device)
+            return logits, labels
+
         # compute logits
         # Einstein sum is more intuitive
         # positive logits: Nx1
         l_pos = torch.einsum("nc,nc->n", [q, k]).unsqueeze(-1)
 
-        if self.hparams.use_negative_examples:
+        if self.hparams.use_negative_examples_from_queue:
             # negative logits: NxK
             l_neg = torch.einsum("nc,ck->nk", [q, self.queue.clone().detach()])
             logits = torch.cat([l_pos, l_neg], dim=1)
@@ -230,6 +241,19 @@ class MoCoMethod(pl.LightningModule):
 
     def _get_contrastive_loss(self, logits, labels):
         if self.hparams.loss_type == "ce":
+            if self.hparams.use_eqco_margin:
+                if self.hparams.use_negative_examples_from_batch:
+                    neg_factor = self.hparams.eqco_alpha / self.hparams.batch_size
+                elif self.hparams.use_negative_examples_from_queue:
+                    neg_factor = self.hparams.eqco_alpha / self.hparams.K
+                else:
+                    raise Exception("Must have negative examples for ce loss")
+
+                predictions = utils.log_softmax_with_factors(
+                    logits / self.hparams.T, neg_factor=neg_factor
+                )
+                return F.nll_loss(predictions, labels)
+
             return F.cross_entropy(logits / self.hparams.T, labels)
 
         new_labels = torch.zeros_like(logits)
@@ -274,12 +298,15 @@ class MoCoMethod(pl.LightningModule):
         with torch.no_grad():
             self._momentum_update_key_encoder()
 
-        if self.hparams.use_negative_examples:
+        some_negative_examples = (
+                self.hparams.use_negative_examples_from_batch or self.hparams.use_negative_examples_from_queue
+        )
+        if some_negative_examples:
             acc1, acc5 = utils.calculate_accuracy(logits, labels, topk=(1, 5))
             log_data.update({"step_train_acc1": acc1, "step_train_acc5": acc5})
 
         # dequeue and enqueue
-        if self.hparams.use_negative_examples:
+        if self.hparams.use_negative_examples_from_queue:
             self._dequeue_and_enqueue(k)
 
         self.log_dict(log_data)
