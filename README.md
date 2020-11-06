@@ -82,11 +82,15 @@ To run SimCLR, simply `use_negative_examples_from_batch` and disable `use_negati
 hparams = MoCoMethodParams(
     use_negative_examples_from_batch=True,
     use_negative_examples_from_queue=False,
-    K=0
+    K=0,
+    m=0.0,
+    use_both_augmentations_as_queries=True,
 )
 ```
 
-**Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs.
+This is not super efficient as it still has the separate offline network, and so it does each embedding calculation twice. However, it is sufficient for comparing the methods with each other.
+
+**Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs. 
 
 ## EqCo
 
