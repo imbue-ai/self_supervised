@@ -68,6 +68,7 @@ params = MoCoMethodParams(
     use_momentum_schedule = True,
     optimizer_name = "lars",
     exclude_matching_parameters_from_lars = [".bias", ".bn"],
+    loss_constant_factor = 2
 )
 model = MoCoMethod(params)
 ```
@@ -187,6 +188,7 @@ class MoCoMethodParams:
     use_both_augmentations_as_queries: bool = False
     optimizer_name: str = "sgd"
     exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
+    loss_constant_factor: float = 1
 
     # MLP parameters
     projection_mlp_layers: int = 2

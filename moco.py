@@ -59,6 +59,7 @@ class MoCoMethodParams:
     use_both_augmentations_as_queries: bool = False
     optimizer_name: str = "sgd"
     exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
+    loss_constant_factor: float = 1
 
     # MLP parameters
     projection_mlp_layers: int = 2
@@ -291,7 +292,7 @@ class MoCoMethod(pl.LightningModule):
             neg_ip = (neg_ip + neg_ip2) / 2
             contrastive_loss += self._get_contrastive_loss(logits2, labels2)
 
-        contrastive_loss = contrastive_loss.mean()
+        contrastive_loss = contrastive_loss.mean() * self.hparams.loss_constant_factor
 
         log_data = {"step_train_loss": contrastive_loss, "step_pos_cos": pos_ip, "step_neg_cos": neg_ip}
 
