@@ -12,7 +12,7 @@ def main():
         batch_size=256,
         gather_keys_for_queue=False,
         loss_type="ip",
-        use_negative_examples=False,
+        use_negative_examples_from_queue=False,
         use_both_augmentations_as_queries=True,
         mlp_normalization="bn",
         prediction_mlp_layers=2,
@@ -26,7 +26,7 @@ def main():
         "proj_only": evolve(base_config, mlp_normalization="bn", prediction_mlp_normalization=None),
         "no_norm": evolve(base_config, mlp_normalization=None),
         "layer_norm": evolve(base_config, mlp_normalization="ln"),
-        "xent": evolve(base_config, use_negative_examples=True, loss_type="ce", mlp_normalization=None, lr=0.02),
+        "xent": evolve(base_config, use_negative_examples_from_queue=True, loss_type="ce", mlp_normalization=None, lr=0.02),
     }
     for seed in range(3):
         for name, config in configs.items():
