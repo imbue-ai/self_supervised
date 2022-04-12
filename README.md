@@ -1,12 +1,19 @@
-# Pytorch-Lightning Implementation of Self-Supervised algorithms
+# PyTorch-Lightning Implementation of Self-Supervised Learning Methods
 
-This is an implementation of [MoCo](https://arxiv.org/abs/1911.05722), [MoCo v2](https://arxiv.org/abs/2003.04297), and [BYOL](https://arxiv.org/abs/2006.07733) using [Pytorch Lightning](https://github.com/PyTorchLightning/pytorch-lightning). The configuration can be tweaked to implement a range of possible self-supervised implementations.
+This is a [PyTorch Lightning](https://github.com/PyTorchLightning/pytorch-lightning) implementation of the following self-supervised representation learning methods:
+- [MoCo](https://arxiv.org/abs/1911.05722)
+- [MoCo v2](https://arxiv.org/abs/2003.04297) 
+- [SimCLR](https://arxiv.org/abs/2002.05709)
+- [BYOL](https://arxiv.org/abs/2006.07733)
+- [EqCo](https://arxiv.org/abs/2010.01929)
+- [VICReg](https://arxiv.org/abs/2105.04906)
 
-We have recently added the necessary functionality to run [SimCLR](https://arxiv.org/abs/2002.05709) and [EqCo](https://arxiv.org/abs/2010.01929) for comparison.
+Supported datasets: ImageNet, STL-10, and CIFAR-10.
 
-See the blog post [Understanding self-supervised and contrastive learning with "Bootstrap Your Own Latent" (BYOL)](https://untitled-ai.github.io/understanding-self-supervised-contrastive-learning.html) for more details.
+During training, the top1/top5 accuracies (out of 1+K examples) are reported where possible. During validation, an `sklearn` linear classifier is trained on half the test set and validated on the other half. The top1 accuracy is logged as `train_class_acc` / `valid_class_acc`.
 
-## Install
+
+## Installing
 
 Make sure you're in a fresh `conda` or `venv` environment, then run:
 
@@ -16,30 +23,98 @@ cd self_supervised
 pip install -r requirements.txt
 ```
 
-## Replicating our results
+## Replicating our BYOL blog post
+
+We found some surprising results about the role of batch norm in BYOL. See the blog post [Understanding self-supervised and contrastive learning with "Bootstrap Your Own Latent" (BYOL)](https://untitled-ai.github.io/understanding-self-supervised-contrastive-learning.html) for more details about our experiments.
 
 You can replicate the results of our blog post by running `python train_blog.py`. The cosine similarity between z and z' is reported as `step_neg_cos` (for negative examples) and `step_pos_cos` (for positive examples). Classification accuracy is reported as `valid_class_acc`.
 
-## Getting started
+## Getting started with MoCo v2
 
 To get started with training a ResNet-18 with MoCo v2 on STL-10 (the default configuration):
 
 ```python
 import os
 import pytorch_lightning as pl
-from moco import MoCoMethod 
+from moco import SelfSupervisedMethod
+from model_params import MoCoParams
 
 os.environ["DATA_PATH"] = "~/data"
 
-model = MoCoMethod()
-trainer = pl.Trainer(gpus=1, max_epochs=320)    
-trainer.fit(model) 
+params = MoCoParams()
+model = SelfSupervisedMethod(params)
+trainer = pl.Trainer(gpus=1, max_epochs=320)
+trainer.fit(model)
 trainer.save_checkpoint("example.ckpt")
 ```
 
-During training, the top1/top5 accuracies (out of 1+K examples) are reported where possible.
- 
-During validation, an `sklearn` linear classifier is trained on half the test set and validated on the other half. The top1 accuracy is logged as `train_class_acc` / `valid_class_acc`. 
+For convenience, you can instead pass these parameters as keyword args, for example with `model = SelfSupervisedMethod(batch_size=128)`.
+
+## VICReg
+
+To train VICReg rather than MoCo v2, use the following parameters:
+
+```python
+import os
+import pytorch_lightning as pl
+from moco import SelfSupervisedMethod
+from model_params import VICRegParams
+
+os.environ["DATA_PATH"] = "~/data"
+
+params = VICRegParams()
+model = SelfSupervisedMethod(params)
+trainer = pl.Trainer(gpus=1, max_epochs=320)
+trainer.fit(model)
+trainer.save_checkpoint("example.ckpt")
+```
+
+Note that we have not tuned these parameters for STL-10, and the parameters used for ImageNet are slightly different. See the comment on VICRegParams for details.
+
+## BYOL
+
+To train BYOL rather than MoCo v2, use the following parameters:
+
+```python
+import os
+import pytorch_lightning as pl
+from moco import SelfSupervisedMethod
+from model_params import BYOLParams
+
+os.environ["DATA_PATH"] = "~/data"
+
+params = BYOLParams()
+model = SelfSupervisedMethod(params)
+trainer = pl.Trainer(gpus=1, max_epochs=320)
+trainer.fit(model)
+trainer.save_checkpoint("example.ckpt")
+```
+
+## SimCLR
+
+To run SimCLR, simply `use_negative_examples_from_batch` and disable `use_negative_examples_from_queue`. You can also set `K=0`: 
+
+ ```python
+import os
+import pytorch_lightning as pl
+from moco import SelfSupervisedMethod
+from model_params import SimCLRParams
+
+os.environ["DATA_PATH"] = "~/data"
+
+params = SimCLRParams()
+model = SelfSupervisedMethod(params)
+trainer = pl.Trainer(gpus=1, max_epochs=320)
+trainer.fit(model)
+trainer.save_checkpoint("example.ckpt")
+```
+
+This is not super efficient as it still has the separate offline network, and so it does each embedding calculation twice. However, it is sufficient for comparing the methods with each other.
+
+**Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs. 
+
+
+# Evaluating a trained model
 
 To train a linear classifier on the result:
 
@@ -52,70 +127,7 @@ trainer = pl.Trainer(gpus=1, max_epochs=100)
 trainer.fit(linear_model)
 ```
 
-## BYOL
-
-To train BYOL rather than MoCo v2, use the following parameters:
-
-```python
-from moco import MoCoMethodParams
-from moco import MoCoMethod
-params = MoCoMethodParams(
-    prediction_mlp_layers = 2,
-    mlp_normalization = "bn",
-    loss_type = "ip",
-    use_negative_examples_from_queue = False,
-    use_both_augmentations_as_queries = True,
-    use_momentum_schedule = True,
-    optimizer_name = "lars",
-    exclude_matching_parameters_from_lars = [".bias", ".bn"],
-    loss_constant_factor = 2
-)
-model = MoCoMethod(params)
-```
-
-For convenience, you can instead pass these parameters add keyword args, for example with `model = MoCoMethod(batch_size=128)`.
-
-## SimCLR
-
-To run SimCLR, simply `use_negative_examples_from_batch` and disable `use_negative_examples_from_queue`. You can also set `K=0`: 
-
- ```python
-hparams = MoCoMethodParams(
-    use_negative_examples_from_batch=True,
-    use_negative_examples_from_queue=False,
-    K=0,
-    m=0.0,
-    use_both_augmentations_as_queries=True,
-)
-```
-
-This is not super efficient as it still has the separate offline network, and so it does each embedding calculation twice. However, it is sufficient for comparing the methods with each other.
-
-**Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs. 
-
-## EqCo
-
-Using EqCo increases the weight on negative examples to create an "effective" number of negative examples `eqco_alpha`. To train MoCo with a smaller queue but the same effective number, you could use,
-
-```python
-hparams = MoCoMethodParams(use_eqco_margin=True, eqco_alpha=65536, K=256)
-```
-
-We found this to be effective in matching the performance of the larger queue in our testing.  Because we are only using 256 examples now, we can actually just get them from the batch,
-
-```python
-hparams = MoCoMethodParams(
-    use_eqco_margin=True, 
-    eqco_alpha=65536, 
-    K=0,
-    use_negative_examples_from_batch=True,
-    use_negative_examples_from_queue=False 
-)
-```
-
-We've found taking negatives from the same batch to perform marginally better than MoCo on STL10.
-
-## Training results
+# Results on STL-10 and ImageNet
 
 Training a ResNet-18 for 320 epochs on STL-10 achieved 85% linear classification accuracy on the test set (1 fold of 5000). This used all default parameters.
 
@@ -123,7 +135,7 @@ Training a ResNet-18 for 320 epochs on STL-10 achieved 85% linear classification
  This used 8 gpus with `ddp` and parameters:
  
  ```python
-hparams = MoCoMethodParams(
+hparams = ModelParams(
     encoder_arch="resnet50",
     shuffle_batch_norm=True,
     embedding_dim=2048,
@@ -138,17 +150,17 @@ hparams = MoCoMethodParams(
 )
 ```
 
-(the `batch_size` differs from the moco documentation due to the way Pytorch-Lightning handles multi-gpu 
-training in `ddp` -- the effective number is `batch_size=256`). **Note that for ImageNet we suggest using 
+(the `batch_size` differs from the moco documentation due to the way PyTorch-Lightning handles multi-gpu 
+training in `ddp` - the effective number is `batch_size=256`). **Note that for ImageNet we suggest using 
 `val_percent_check=0.1` when calling `pl.Trainer`** to reduce the time fitting the sklearn model.
  
 
-## Other options
+# All training options
 
-All possible `hparams` for MoCoMethod, along with defaults:
+All possible `hparams` for SelfSupervisedMethod, along with defaults:
 
 ```python
-class MoCoMethodParams:
+class ModelParams:
     # encoder model selection
     encoder_arch: str = "resnet18"
     shuffle_batch_norm: bool = False
@@ -163,7 +175,6 @@ class MoCoMethodParams:
     dim: int = 128
     m: float = 0.996
     T: float = 0.2
-    gather_keys_for_queue: bool = False
 
     # eqco parameters
     eqco_alpha: int = 65536
@@ -171,14 +182,14 @@ class MoCoMethodParams:
     use_negative_examples_from_batch: bool = False
 
     # optimization parameters
-    lr: float = 0.2
+    lr: float = 0.5
     momentum: float = 0.9
     weight_decay: float = 1e-4
-    max_epochs: int = 200
+    max_epochs: int = 320
+    final_lr_schedule_value: float = 0.0
 
     # transform parameters
     transform_s: float = 0.5
-    transform_crop_size: int = 96
     transform_apply_blur: bool = True
 
     # Change these to make more like BYOL
@@ -187,8 +198,19 @@ class MoCoMethodParams:
     use_negative_examples_from_queue: bool = True
     use_both_augmentations_as_queries: bool = False
     optimizer_name: str = "sgd"
+    lars_warmup_epochs: int = 1
+    lars_eta: float = 1e-3
     exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
     loss_constant_factor: float = 1
+
+    # Change these to make more like VICReg
+    use_vicreg_loss: bool = False
+    use_lagging_model: bool = True
+    use_unit_sphere_projection: bool = True
+    invariance_loss_weight: float = 25.0
+    variance_loss_weight: float = 25.0
+    covariance_loss_weight: float = 1.0
+    variance_loss_epsilon: float = 1e-04
 
     # MLP parameters
     projection_mlp_layers: int = 2
@@ -203,31 +225,68 @@ class MoCoMethodParams:
     num_data_workers: int = 4
     drop_last_batch: bool = True
     pin_data_memory: bool = True
+    gather_keys_for_queue: bool = False
 ```
 
 A few options require more explanation:
 
-**encoder_arch** can be any torchvision model, or can be one of the ResNet models with weight standardization defined in 
+- **encoder_arch** can be any torchvision model, or can be one of the ResNet models with weight standardization defined in 
 `ws_resnet.py`.
 
-**dataset_name** can be `stl10` or `imagenet`. `os.environ["DATA_PATH"]` will be used as the path to the data. STL-10 will
-be downloaded if it does not already exist.
+- **dataset_name** can be `imagenet`, `stl10`, or `cifar10`. `os.environ["DATA_PATH"]` will be used as the path to the data. STL-10 and CIFAR-10 will
+be downloaded if they do not already exist.
 
-**loss_type** can be `ce` (cross entropy) with one of the `use_negative_examples` to correspond to MoCo or `ip` (inner product) 
+- **loss_type** can be `ce` (cross entropy) with one of the `use_negative_examples` to correspond to MoCo or `ip` (inner product) 
 with both `use_negative_examples=False` to correspond to BYOL. It can also be `bce`, which is similar to `ip` but applies the 
-binary cross entropy loss function to the result.
+binary cross entropy loss function to the result. Or it can be `vic` for VICReg loss.
 
-**optimizer_name**, currently just `sgd` or `lars`. 
+- **optimizer_name**, currently just `sgd` or `lars`. 
 
-**exclude_matching_parameters_from_lars** will remove weight decay and LARS learning rate from matching parameters. Set
+- **exclude_matching_parameters_from_lars** will remove weight decay and LARS learning rate from matching parameters. Set
 to `[".bias", ".bn"]` to match BYOL paper implementation.
 
-**mlp_normalization** can be None for no normalization, `bn` for batch normalization, `ln` for layer norm, `gn` for group
+- **mlp_normalization** can be None for no normalization, `bn` for batch normalization, `ln` for layer norm, `gn` for group
 norm, or `br` for [batch renormalization](https://github.com/ludvb/batchrenorm).
 
-**prediction_mlp_normalization** defaults to `same` to use the same normalization as above, but can be given any of the
+- **prediction_mlp_normalization** defaults to `same` to use the same normalization as above, but can be given any of the
 above parameters to use a different normalization.
 
-**shuffle_batch_norm** and **gather_keys_for_queue** are both related to multi-gpu training. **shuffle_batch_norm** 
+- **shuffle_batch_norm** and **gather_keys_for_queue** are both related to multi-gpu training. **shuffle_batch_norm** 
 will shuffle the *key* images among GPUs, which is needed for training if batch norm is used. **gather_keys_for_queue** 
 will gather key projections (z' in the blog post) from all gpus to add to the MoCo queue.
+
+# Training with custom options
+
+You can train using any settings of the above parameters. This configuration represents the settings from BYOL:
+
+```python
+hparams = ModelParams(
+ prediction_mlp_layers=2,
+ mlp_normalization="bn",
+ loss_type="ip",
+ use_negative_examples_from_queue=False,
+ use_both_augmentations_as_queries=True,
+ use_momentum_schedule=True,
+ optimizer_name="lars",
+ exclude_matching_parameters_from_lars=[".bias", ".bn"],
+ loss_constant_factor=2
+)
+
+```
+Or here is our recommended way to modify VICReg for CIFAR-10:
+```python
+from model_params import VICRegParams
+
+hparams = VICRegParams(
+   dataset_name="cifar10",
+   transform_apply_blur=False,
+   mlp_hidden_dim=2048,
+   dim=2048,
+   batch_size=256,
+   lr=0.3,
+   final_lr_schedule_value=0,
+   weight_decay=1e-4,
+   lars_warmup_epochs=10,
+   lars_eta=0.02
+)
+```
