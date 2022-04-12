@@ -2,7 +2,6 @@ import copy
 import math
 import warnings
 from functools import partial
-from typing import List
 from typing import Optional
 from typing import Union
 
@@ -11,73 +10,16 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from pytorch_lightning.utilities import AttributeDict
-from sklearn.linear_model import LogisticRegression
 from torch.utils.data import DataLoader
 
 import utils
 from batchrenorm import BatchRenorm1d
 from lars import LARS
+from model_params import ModelParams
+from sklearn.linear_model import LogisticRegression
 
 
-@attr.s(auto_attribs=True)
-class MoCoMethodParams:
-    # encoder model selection
-    encoder_arch: str = "resnet18"
-    shuffle_batch_norm: bool = False
-    embedding_dim: int = 512  # must match embedding dim of encoder
-
-    # data-related parameters
-    dataset_name: str = "stl10"
-    batch_size: int = 256
-
-    # MoCo parameters
-    K: int = 65536  # number of examples in queue
-    dim: int = 128
-    m: float = 0.996
-    T: float = 0.2
-
-    # eqco parameters
-    eqco_alpha: int = 65536
-    use_eqco_margin: bool = False
-    use_negative_examples_from_batch: bool = False
-
-    # optimization parameters
-    lr: float = 0.5
-    momentum: float = 0.9
-    weight_decay: float = 1e-4
-    max_epochs: int = 320
-
-    # transform parameters
-    transform_s: float = 0.5
-    transform_crop_size: int = 96
-    transform_apply_blur: bool = True
-
-    # Change these to make more like BYOL
-    use_momentum_schedule: bool = False
-    loss_type: str = "ce"
-    use_negative_examples_from_queue: bool = True
-    use_both_augmentations_as_queries: bool = False
-    optimizer_name: str = "sgd"
-    exclude_matching_parameters_from_lars: List[str] = []  # set to [".bias", ".bn"] to match paper
-    loss_constant_factor: float = 1
-
-    # MLP parameters
-    projection_mlp_layers: int = 2
-    prediction_mlp_layers: int = 0
-    mlp_hidden_dim: int = 512
-
-    mlp_normalization: Optional[str] = None
-    prediction_mlp_normalization: Optional[str] = "same"  # if same will use mlp_normalization
-    use_mlp_weight_standardization: bool = False
-
-    # data loader parameters
-    num_data_workers: int = 4
-    drop_last_batch: bool = True
-    pin_data_memory: bool = True
-    gather_keys_for_queue: bool = False
-
-
-def get_mlp_normalization(hparams: MoCoMethodParams, prediction=False):
+def get_mlp_normalization(hparams: ModelParams, prediction=False):
     normalization_str = hparams.mlp_normalization
     if prediction and hparams.prediction_mlp_normalization != "same":
         normalization_str = hparams.prediction_mlp_normalization
@@ -96,14 +38,16 @@ def get_mlp_normalization(hparams: MoCoMethodParams, prediction=False):
         raise NotImplementedError(f"mlp normalization {normalization_str} not implemented")
 
 
-class MoCoMethod(pl.LightningModule):
+class SelfSupervisedMethod(pl.LightningModule):
     model: torch.nn.Module
     dataset: utils.DatasetBase
     hparams: AttributeDict
     embedding_dim: Optional[int]
 
     def __init__(
-        self, hparams: Union[MoCoMethodParams, dict, None] = None, **kwargs,
+        self,
+        hparams: Union[ModelParams, dict, None] = None,
+        **kwargs,
     ):
         super().__init__()
 
@@ -129,18 +73,18 @@ class MoCoMethod(pl.LightningModule):
             warnings.warn("Configuration suspicious: cross entropy loss without negative examples")
 
         # Create encoder model
-        self.model = utils.get_encoder(hparams.encoder_arch)
+        self.model = utils.get_encoder(hparams.encoder_arch, hparams.dataset_name)
 
         # Create dataset
-        transforms = utils.MoCoTransforms(
-            s=hparams.transform_s, crop_size=hparams.transform_crop_size, apply_blur=hparams.transform_apply_blur
-        )
-        self.dataset = utils.get_moco_dataset(hparams.dataset_name, transforms)
+        self.dataset = utils.get_moco_dataset(hparams)
 
-        # "key" function (no grad)
-        self.lagging_model = copy.deepcopy(self.model)
-        for param in self.lagging_model.parameters():
-            param.requires_grad = False
+        if hparams.use_lagging_model:
+            # "key" function (no grad)
+            self.lagging_model = copy.deepcopy(self.model)
+            for param in self.lagging_model.parameters():
+                param.requires_grad = False
+        else:
+            self.lagging_model = None
 
         self.projection_model = utils.MLP(
             hparams.embedding_dim,
@@ -160,19 +104,24 @@ class MoCoMethod(pl.LightningModule):
             weight_standardization=hparams.use_mlp_weight_standardization,
         )
 
-        #  "key" function (no grad)
-        self.lagging_projection_model = copy.deepcopy(self.projection_model)
-        for param in self.lagging_projection_model.parameters():
-            param.requires_grad = False
+        if hparams.use_lagging_model:
+            #  "key" function (no grad)
+            self.lagging_projection_model = copy.deepcopy(self.projection_model)
+            for param in self.lagging_projection_model.parameters():
+                param.requires_grad = False
+        else:
+            self.lagging_projection_model = None
 
         # this classifier is used to compute representation quality each epoch
         self.sklearn_classifier = LogisticRegression(max_iter=100, solver="liblinear")
 
-        # create the queue
-        self.register_buffer("queue", torch.randn(hparams.dim, hparams.K))
-        self.queue = torch.nn.functional.normalize(self.queue, dim=0)
-
-        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+        if hparams.use_negative_examples_from_queue:
+            # create the queue
+            self.register_buffer("queue", torch.randn(hparams.dim, hparams.K))
+            self.queue = torch.nn.functional.normalize(self.queue, dim=0)
+            self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+        else:
+            self.queue = None
 
     def _get_embeddings(self, x):
         """
@@ -191,18 +140,22 @@ class MoCoMethod(pl.LightningModule):
         emb_q = self.model(im_q)
         q_projection = self.projection_model(emb_q)
         q = self.prediction_model(q_projection)  # queries: NxC
-        q = torch.nn.functional.normalize(q, dim=1)
+        if self.hparams.use_lagging_model:
+            # compute key features
+            with torch.no_grad():  # no gradient to keys
+                if self.hparams.shuffle_batch_norm:
+                    im_k, idx_unshuffle = utils.BatchShuffleDDP.shuffle(im_k)
+                k = self.lagging_projection_model(self.lagging_model(im_k))  # keys: NxC
+                if self.hparams.shuffle_batch_norm:
+                    k = utils.BatchShuffleDDP.unshuffle(k, idx_unshuffle)
+        else:
+            emb_k = self.model(im_k)
+            k_projection = self.projection_model(emb_k)
+            k = self.prediction_model(k_projection)  # queries: NxC
 
-        # compute key features
-        with torch.no_grad():  # no gradient to keys
-            if self.hparams.shuffle_batch_norm:
-                im_k, idx_unshuffle = utils.BatchShuffleDDP.shuffle(im_k)
-
-            k = self.lagging_projection_model(self.lagging_model(im_k))  # keys: NxC
+        if self.hparams.use_unit_sphere_projection:
+            q = torch.nn.functional.normalize(q, dim=1)
             k = torch.nn.functional.normalize(k, dim=1)
-
-            if self.hparams.shuffle_batch_norm:
-                k = utils.BatchShuffleDDP.unshuffle(k, idx_unshuffle)
 
         return emb_q, q, k
 
@@ -250,9 +203,7 @@ class MoCoMethod(pl.LightningModule):
                 else:
                     raise Exception("Must have negative examples for ce loss")
 
-                predictions = utils.log_softmax_with_factors(
-                    logits / self.hparams.T, neg_factor=neg_factor
-                )
+                predictions = utils.log_softmax_with_factors(logits / self.hparams.T, neg_factor=neg_factor)
                 return F.nll_loss(predictions, labels)
 
             return F.cross_entropy(logits / self.hparams.T, labels)
@@ -270,37 +221,84 @@ class MoCoMethod(pl.LightningModule):
 
         raise NotImplementedError(f"Loss function {self.hparams.loss_type} not implemented")
 
+    def _get_vicreg_loss(self, z_a, z_b, batch_idx):
+        assert z_a.shape == z_b.shape and len(z_a.shape) == 2
+
+        # invariance loss
+        loss_inv = F.mse_loss(z_a, z_b)
+
+        # variance loss
+        std_z_a = torch.sqrt(z_a.var(dim=0) + self.hparams.variance_loss_epsilon)
+        std_z_b = torch.sqrt(z_b.var(dim=0) + self.hparams.variance_loss_epsilon)
+        loss_v_a = torch.mean(F.relu(1 - std_z_a))
+        loss_v_b = torch.mean(F.relu(1 - std_z_b))
+        loss_var = loss_v_a + loss_v_b
+
+        # covariance loss
+        N, D = z_a.shape
+        z_a = z_a - z_a.mean(dim=0)
+        z_b = z_b - z_b.mean(dim=0)
+        cov_z_a = ((z_a.T @ z_a) / (N - 1)).square()  # DxD
+        cov_z_b = ((z_b.T @ z_b) / (N - 1)).square()  # DxD
+        loss_c_a = (cov_z_a.sum() - cov_z_a.diagonal().sum()) / D
+        loss_c_b = (cov_z_b.sum() - cov_z_b.diagonal().sum()) / D
+        loss_cov = loss_c_a + loss_c_b
+
+        weighted_inv = loss_inv * self.hparams.invariance_loss_weight
+        weighted_var = loss_var * self.hparams.variance_loss_weight
+        weighted_cov = loss_cov * self.hparams.covariance_loss_weight
+
+        loss = weighted_inv + weighted_var + weighted_cov
+
+        return {
+            "loss": loss,
+            "loss_invariance": weighted_inv,
+            "loss_variance": weighted_var,
+            "loss_covariance": weighted_cov,
+        }
+
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx, optimizer_idx=None):
+        all_params = list(self.model.parameters())
         x, class_labels = batch  # batch is a tuple, we just want the image
 
         emb_q, q, k = self._get_embeddings(x)
-        logits, labels = self._get_contrastive_predictions(q, k)
         pos_ip, neg_ip = self._get_pos_neg_ip(emb_q, k)
 
-        contrastive_loss = self._get_contrastive_loss(logits, labels)
+        logits, labels = self._get_contrastive_predictions(q, k)
+        if self.hparams.use_vicreg_loss:
+            losses = self._get_vicreg_loss(q, k, batch_idx)
+            contrastive_loss = losses["loss"]
+        else:
+            losses = {}
+            contrastive_loss = self._get_contrastive_loss(logits, labels)
 
-        if self.hparams.use_both_augmentations_as_queries:
-            x_flip = torch.flip(x, dims=[1])
-            emb_q2, q2, k2 = self._get_embeddings(x_flip)
-            logits2, labels2 = self._get_contrastive_predictions(q2, k2)
+            if self.hparams.use_both_augmentations_as_queries:
+                x_flip = torch.flip(x, dims=[1])
+                emb_q2, q2, k2 = self._get_embeddings(x_flip)
+                logits2, labels2 = self._get_contrastive_predictions(q2, k2)
 
-            pos_ip2, neg_ip2 = self._get_pos_neg_ip(emb_q2, k2)
-            pos_ip = (pos_ip + pos_ip2) / 2
-            neg_ip = (neg_ip + neg_ip2) / 2
-            contrastive_loss += self._get_contrastive_loss(logits2, labels2)
+                pos_ip2, neg_ip2 = self._get_pos_neg_ip(emb_q2, k2)
+                pos_ip = (pos_ip + pos_ip2) / 2
+                neg_ip = (neg_ip + neg_ip2) / 2
+                contrastive_loss += self._get_contrastive_loss(logits2, labels2)
 
         contrastive_loss = contrastive_loss.mean() * self.hparams.loss_constant_factor
 
-        log_data = {"step_train_loss": contrastive_loss, "step_pos_cos": pos_ip, "step_neg_cos": neg_ip}
+        log_data = {
+            "step_train_loss": contrastive_loss,
+            "step_pos_cos": pos_ip,
+            "step_neg_cos": neg_ip,
+            **losses,
+        }
 
         with torch.no_grad():
             self._momentum_update_key_encoder()
 
         some_negative_examples = (
-                self.hparams.use_negative_examples_from_batch or self.hparams.use_negative_examples_from_queue
+            self.hparams.use_negative_examples_from_batch or self.hparams.use_negative_examples_from_queue
         )
         if some_negative_examples:
             acc1, acc5 = utils.calculate_accuracy(logits, labels, topk=(1, 5))
@@ -356,20 +354,30 @@ class MoCoMethod(pl.LightningModule):
 
         param_groups = [
             {"params": regular_parameters, "names": regular_parameter_names, "use_lars": True},
-            {"params": excluded_parameters, "names": excluded_parameter_names, "use_lars": False, "weight_decay": 0,},
+            {
+                "params": excluded_parameters,
+                "names": excluded_parameter_names,
+                "use_lars": False,
+                "weight_decay": 0,
+            },
         ]
         if self.hparams.optimizer_name == "sgd":
             optimizer = torch.optim.SGD
         elif self.hparams.optimizer_name == "lars":
-            optimizer = LARS
+            optimizer = partial(LARS, warmup_epochs=self.hparams.lars_warmup_epochs, eta=self.hparams.lars_eta)
         else:
             raise NotImplementedError(f"No such optimizer {self.hparams.optimizer_name}")
 
         encoding_optimizer = optimizer(
-            param_groups, lr=self.hparams.lr, momentum=self.hparams.momentum, weight_decay=self.hparams.weight_decay,
+            param_groups,
+            lr=self.hparams.lr,
+            momentum=self.hparams.momentum,
+            weight_decay=self.hparams.weight_decay,
         )
         self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            encoding_optimizer, self.hparams.max_epochs, eta_min=0
+            encoding_optimizer,
+            self.hparams.max_epochs,
+            eta_min=self.hparams.final_lr_schedule_value,
         )
         return [encoding_optimizer], [self.lr_scheduler]
 
@@ -386,6 +394,8 @@ class MoCoMethod(pl.LightningModule):
         """
         Momentum update of the key encoder
         """
+        if not self.hparams.use_lagging_model:
+            return
         m = self._get_m()
         for param_q, param_k in zip(self.model.parameters(), self.lagging_model.parameters()):
             param_k.data = param_k.data * m + param_q.data * (1.0 - m)
@@ -433,5 +443,5 @@ class MoCoMethod(pl.LightningModule):
         )
 
     @classmethod
-    def params(cls, **kwargs) -> MoCoMethodParams:
-        return MoCoMethodParams(**kwargs)
+    def params(cls, **kwargs) -> ModelParams:
+        return ModelParams(**kwargs)

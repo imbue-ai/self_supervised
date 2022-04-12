@@ -9,10 +9,12 @@ import torch
 import torchvision
 from PIL import ImageFilter
 from torchvision import transforms
+from torchvision.datasets import CIFAR10
 from torchvision.datasets import STL10
 from torchvision.datasets import ImageFolder
 
 import ws_resnet
+from model_params import ModelParams
 
 ###################
 # Transform utils #
@@ -31,14 +33,13 @@ class GaussianBlur(object):
         return x
 
 
-moco_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-moco_test_transform = transforms.Compose([transforms.ToTensor(), moco_normalize])
-
-
 @attr.s(auto_attribs=True)
 class MoCoTransforms:
-    s: float = 0.5
     crop_size: int = 224
+    resize: int = 256
+    normalize_means: list = [0.4914, 0.4822, 0.4465]
+    normalize_stds: list = [0.2023, 0.1994, 0.2010]
+    s: float = 0.5
     apply_blur: bool = True
 
     def split_transform(self, img) -> torch.Tensor:
@@ -57,21 +58,16 @@ class MoCoTransforms:
         if self.apply_blur:
             transform_list.append(transforms.RandomApply([GaussianBlur([0.1, 2.0])], p=0.5))
         transform_list.append(transforms.ToTensor())
-        transform_list.append(moco_normalize)
+        transform_list.append(transforms.Normalize(mean=self.normalize_means, std=self.normalize_stds))
         return transforms.Compose(transform_list)
 
     def get_test_transform(self):
-        # rough heuristic for resizing test set before crop
-        if self.crop_size < 128:
-            test_resize = 128
-        else:
-            test_resize = 256
         return transforms.Compose(
             [
-                transforms.Resize(test_resize),
+                transforms.Resize(self.resize),
                 transforms.CenterCrop(self.crop_size),
                 transforms.ToTensor(),
-                moco_normalize,
+                transforms.Normalize(mean=self.normalize_means, std=self.normalize_stds),
             ]
         )
 
@@ -125,7 +121,10 @@ class DatasetBase:
 
 
 stl10_default_transform = transforms.Compose(
-    [transforms.ToTensor(), transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),]
+    [
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ]
 )
 
 
@@ -154,7 +153,10 @@ class STL10LabeledDataset(DatasetBase):
 
 
 imagenet_default_transform = transforms.Compose(
-    [transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),]
+    [
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
 )
 
 
@@ -172,12 +174,62 @@ class ImagenetDataset(DatasetBase):
         return ImageFolder(self.data_path + "/imagenet/val", transform=self.transform_test)
 
 
-def get_moco_dataset(name: str, t: MoCoTransforms) -> DatasetBase:
-    if name == "stl10":
-        return STL10UnlabeledDataset(transform_train=t.split_transform, transform_test=t.get_test_transform())
-    elif name == "imagenet":
-        return ImagenetDataset(transform_train=t.split_transform, transform_test=t.get_test_transform())
-    raise NotImplementedError(f"Dataset {name} not defined")
+cifar10_default_transform = transforms.Compose(
+    [
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+    ]
+)
+
+
+@attr.s(auto_attribs=True, slots=True)
+class CIFAR10Dataset(DatasetBase):
+    transform_train: Callable[[Any], torch.Tensor] = cifar10_default_transform
+    transform_test: Callable[[Any], torch.Tensor] = cifar10_default_transform
+
+    def configure_train(self):
+        return CIFAR10(self.data_path, train=True, download=True, transform=self.transform_train)
+
+    def configure_validation(self):
+        return CIFAR10(self.data_path, train=False, download=True, transform=self.transform_test)
+
+
+def get_moco_dataset(hparams: ModelParams) -> DatasetBase:
+    if hparams.dataset_name == "stl10":
+        crop_size = 96
+        resize = 124
+        normalize_means = [0.4914, 0.4823, 0.4466]
+        normalize_stds = [0.247, 0.243, 0.261]
+        transforms = MoCoTransforms(
+            crop_size, resize, normalize_means, normalize_stds, hparams.transform_s, hparams.transform_apply_blur
+        )
+        return STL10UnlabeledDataset(
+            transform_train=transforms.split_transform, transform_test=transforms.get_test_transform()
+        )
+    elif hparams.dataset_name == "imagenet":
+        crop_size = 224
+        resize = 256
+        normalize_means = [0.485, 0.456, 0.406]
+        normalize_stds = [0.228, 0.224, 0.225]
+        transforms = MoCoTransforms(
+            crop_size, resize, normalize_means, normalize_stds, hparams.transform_s, hparams.transform_apply_blur
+        )
+        return ImagenetDataset(
+            transform_train=transforms.split_transform, transform_test=transforms.get_test_transform()
+        )
+    elif hparams.dataset_name == "cifar10":
+        crop_size = 32
+        resize = 36
+        normalize_means = [0.4914, 0.4822, 0.4465]
+        normalize_stds = [0.2023, 0.1994, 0.2010]
+        transforms = MoCoTransforms(
+            crop_size, resize, normalize_means, normalize_stds, hparams.transform_s, hparams.transform_apply_blur
+        )
+        return CIFAR10Dataset(
+            transform_train=transforms.split_transform, transform_test=transforms.get_test_transform()
+        )
+    else:
+        raise NotImplementedError(f"Dataset {name} not defined")
 
 
 def get_class_transforms(crop_size, resize):
@@ -198,6 +250,9 @@ def get_class_dataset(name: str) -> DatasetBase:
     elif name == "imagenet":
         transform_train, transform_test = get_class_transforms(224, 256)
         return ImagenetDataset(transform_train=transform_train, transform_test=transform_test)
+    elif name == "cifar10":
+        transform_train, transform_test = get_class_transforms(32, 36)
+        return CIFAR10Dataset(transform_train=transform_train, transform_test=transform_test)
     raise NotImplementedError(f"Dataset {name} not defined")
 
 
@@ -311,10 +366,11 @@ class MLP(torch.nn.Module):
         return self.net(x)
 
 
-def get_encoder(name: str, **kwargs) -> torch.nn.Module:
+def get_encoder(name: str, dataset: str, **kwargs) -> torch.nn.Module:
     """
     Gets just the encoder portion of a torchvision model (replaces final layer with identity)
     :param name: (str) name of the model
+    :param name: (str) name of the dataset
     :param kwargs: kwargs to send to the model
     :return:
     """
@@ -330,6 +386,9 @@ def get_encoder(name: str, **kwargs) -> torch.nn.Module:
     model = model_creator(**kwargs)
     if hasattr(model, "fc"):
         model.fc = torch.nn.Identity()
+        if dataset == "cifar10":
+            model.conv1 = torch.nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=2, bias=False)
+            model.maxpool = torch.nn.Identity()
     elif hasattr(model, "classifier"):
         model.classifier = torch.nn.Identity()
     else:

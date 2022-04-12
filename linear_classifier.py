@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 import utils
 
+
 @attr.s(auto_attribs=True)
 class LinearClassifierMethodParams:
     # encoder model selection
@@ -38,7 +39,9 @@ class LinearClassifierMethod(pl.LightningModule):
     hparams: AttributeDict
 
     def __init__(
-        self, hparams: LinearClassifierMethodParams = None, **kwargs,
+        self,
+        hparams: LinearClassifierMethodParams = None,
+        **kwargs,
     ):
         super().__init__()
 

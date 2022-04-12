@@ -15,7 +15,11 @@ __all__ = ["BatchRenorm1d", "BatchRenorm2d", "BatchRenorm3d"]
 
 class BatchRenorm(torch.nn.Module):
     def __init__(
-        self, num_features: int, eps: float = 1e-3, momentum: float = 0.01, affine: bool = True,
+        self,
+        num_features: int,
+        eps: float = 1e-3,
+        momentum: float = 0.01,
+        affine: bool = True,
     ):
         super().__init__()
         self.register_buffer("running_mean", torch.zeros(num_features, dtype=torch.float))
