@@ -2,12 +2,12 @@ import pytorch_lightning as pl
 from attr import evolve
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from moco import MoCoMethodParams
+from model_params import ModelParams
 from moco import SelfSupervisedMethod
 
 
 def main():
-    base_config = MoCoMethodParams(
+    base_config = ModelParams(
         lr=0.8,
         batch_size=256,
         gather_keys_for_queue=False,

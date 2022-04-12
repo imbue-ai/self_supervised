@@ -37,11 +37,11 @@ To get started with training a ResNet-18 with MoCo v2 on STL-10 (the default con
 import os
 import pytorch_lightning as pl
 from moco import SelfSupervisedMethod
-from model_params import MoCoParams
+from model_params import ModelParams
 
 os.environ["DATA_PATH"] = "~/data"
 
-params = MoCoParams()
+params = ModelParams()
 model = SelfSupervisedMethod(params)
 trainer = pl.Trainer(gpus=1, max_epochs=320)
 trainer.fit(model)
