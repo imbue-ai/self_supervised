@@ -56,7 +56,7 @@ class SelfSupervisedMethod(pl.LightningModule):
         elif isinstance(hparams, dict):
             hparams = self.params(**hparams, **kwargs)
 
-        if pl.__version__ >= '1.3.0':
+        if isinstance(self.hparams, AttributeDict):
             self.hparams.update(AttributeDict(attr.asdict(hparams)))
         else:
             self.hparams = AttributeDict(attr.asdict(hparams))
