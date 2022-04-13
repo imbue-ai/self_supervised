@@ -92,7 +92,7 @@ trainer.save_checkpoint("example.ckpt")
 
 ## SimCLR
 
-To run SimCLR, simply `use_negative_examples_from_batch` and disable `use_negative_examples_from_queue`. You can also set `K=0`: 
+To train SimCLR rather than MoCo v2, use the following parameters:
 
  ```python
 import os
@@ -108,8 +108,6 @@ trainer = pl.Trainer(gpus=1, max_epochs=320)
 trainer.fit(model)
 trainer.save_checkpoint("example.ckpt")
 ```
-
-This is not super efficient as it still has the separate offline network, and so it does each embedding calculation twice. However, it is sufficient for comparing the methods with each other.
 
 **Note for multi-GPU setups**: this currently only uses negatives on the same GPU, and will not sync negatives across multiple GPUs. 
 
