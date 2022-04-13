@@ -2,7 +2,13 @@ import utils
 
 from .linear_classifier import LinearClassifierMethod
 from .linear_classifier import LinearClassifierMethodParams
-from .moco import MoCoMethod
-from .moco import MoCoMethodParams
+from .moco import SelfSupervisedMethod
+from .model_params import ModelParams
 
-__all__ = ["MoCoMethod", "MoCoMethodParams", "LinearClassifierMethod", "LinearClassifierMethodParams", "utils"]
+__all__ = [
+    "SelfSupervisedMethod",
+    "ModelParams",
+    "LinearClassifierMethod",
+    "LinearClassifierMethodParams",
+    "utils",
+]
