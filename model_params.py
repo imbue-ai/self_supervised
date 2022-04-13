@@ -113,6 +113,7 @@ SimCLRParams = partial(
     ModelParams,
     use_negative_examples_from_batch=True,
     use_negative_examples_from_queue=False,
+    use_lagging_model=False,
     K=0,
     m=0.0,
     use_both_augmentations_as_queries=True,
